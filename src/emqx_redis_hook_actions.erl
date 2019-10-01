@@ -105,7 +105,7 @@ on_resource_create(ResId, Conf = #{<<"host">> := Host,<<"port">> := Port, <<"db"
     
 
 -spec(on_get_resource_status(binary(), map()) -> map()).
-on_get_resource_status(ResId, _Params = #{<<"host">> := Host,<<"port">> := Port, <<"db">> := DB, <<"pwd">> := Pwd}) ->
+on_get_resource_status(_ResId, _Params) ->
     #{is_alive => erlang:is_process_alive(whereis(redis_client))}.
 
 -spec(on_resource_destroy(binary(), map()) -> ok | {error, Reason::term()}).
