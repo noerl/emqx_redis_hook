@@ -125,8 +125,12 @@ on_resource_destroy(_ResId, _Params) ->
 %% An action that forwards publish messages to redis.
 -spec(on_action_create_data_to_redis(Id::binary(), #{}) -> action_fun()).
 on_action_create_data_to_redis(_Id, Params = #{<<"host">> := Host,<<"port">> := Port, <<"db">> := DB, <<"pwd">> := Pwd}) ->
-    {ok, Pid} = eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)),
-    erlang:register(redis_client, Pid).
+    fun(Selected, _Envs) ->
+        io:format("Selected:~p, _Envs:~p~n", [Selected, _Envs]),
+        {ok, Pid} = eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)),
+        erlang:register(redis_client, Pid)
+    end.
+    
     
 
 %%------------------------------------------------------------------------------
