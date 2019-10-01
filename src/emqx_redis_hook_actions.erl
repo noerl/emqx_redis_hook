@@ -95,7 +95,7 @@ on_resource_create(ResId, Conf = #{<<"host">> := Host,<<"port">> := Port, <<"db"
     io:format("Conf:~p~n", [Conf]),
     case eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)) of
         {ok, Pid} ->
-            eredis:stop(Pid),
+            erlang:register(redis_client, Pid),
             Conf;
         {error, Reason} ->
             ?LOG(error, "Initiate Resource ~p failed, ResId: ~p, ~0p",
@@ -106,17 +106,7 @@ on_resource_create(ResId, Conf = #{<<"host">> := Host,<<"port">> := Port, <<"db"
 
 -spec(on_get_resource_status(binary(), map()) -> map()).
 on_get_resource_status(ResId, _Params = #{<<"host">> := Host,<<"port">> := Port, <<"db">> := DB, <<"pwd">> := Pwd}) ->
-    io:format("_Params:~p~n", [_Params]),
-    #{is_alive =>
-            case eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)) of
-            {ok, Pid} ->
-                eredis:stop(Pid),
-                true;
-            {error, Reason} ->
-                ?LOG(error, "Connectivity Check for ~p failed, ResId: ~p, ~0p",
-                    [?RESOURCE_TYPE_REDISHOOK, ResId, Reason]),
-                false
-        end}.
+    #{is_alive => erlang:is_process_alive(whereis(redis_client))}.
 
 -spec(on_resource_destroy(binary(), map()) -> ok | {error, Reason::term()}).
 on_resource_destroy(_ResId, _Params) ->
@@ -126,9 +116,9 @@ on_resource_destroy(_ResId, _Params) ->
 -spec(on_action_create_data_to_redis(Id::binary(), #{}) -> action_fun()).
 on_action_create_data_to_redis(_Id, Params = #{<<"host">> := Host,<<"port">> := Port, <<"db">> := DB, <<"pwd">> := Pwd}) ->
     fun(Selected, _Envs) ->
-        io:format("Selected:~p, _Envs:~p~n", [Selected, _Envs]),
-        {ok, Pid} = eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)),
-        erlang:register(redis_client, Pid)
+        #{id := Id, payload := Payload} = Selected,
+        io:format("Id:~p~n", [Id]),
+        eredis:q(redis_client, ["SET", Id, Payload])
     end.
     
     
