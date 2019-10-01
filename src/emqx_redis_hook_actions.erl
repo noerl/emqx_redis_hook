@@ -114,7 +114,7 @@ on_resource_destroy(_ResId, _Params) ->
 
 %% An action that forwards publish messages to redis.
 -spec(on_action_create_data_to_redis(Id::binary(), #{}) -> action_fun()).
-on_action_create_data_to_redis(_Id, _Params}) ->
+on_action_create_data_to_redis(_Id, _Params) ->
     fun(Selected, _Envs) ->
         #{id := Id, payload := Payload} = Selected,
         io:format("Id:~p~n", [Id]),
