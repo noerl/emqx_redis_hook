@@ -210,7 +210,7 @@ on_message_publish(Message = #message{topic = Topic, flags = #{retain := Retain}
                   {retain, Retain},
                   {payload, encode_payload(Message#message.payload)},
                   {ts, emqx_time:now_secs(Message#message.timestamp)}],
-        send_http_request(Params),
+        eredis:q(redis_client, ["SET", Topic, Message#message.payload]),
         {ok, Message}
       end, Message, Topic, Filter).
 

@@ -1,6 +1,6 @@
 {application,emqx_redis_hook,
              [{description,"EMQ X Redis Plugin"},
-              {vsn,"git"},
+              {vsn,"1.0.0"},
               {modules,[]},
               {registered,[emqx_redis_hook_sup]},
               {applications,[kernel,stdlib,jsx,clique]},

@@ -5,27 +5,35 @@
 
 -define(RESOURCE_TYPE_REDISHOOK, 'redis_hook').
 -define(RESOURCE_CONFIG_SPEC, #{
-            url => #{type => string,
-                     format => url,
+            host => #{type => string,
                      required => true,
-                     title => #{en => <<"Request URL">>,
-                                zh => <<"请求 URL"/utf8>>},
-                     description => #{en => <<"Request URL">>,
-                                      zh => <<"请求 URL"/utf8>>}},
-            headers => #{type => object,
-                         schema => #{},
-                         default => #{},
-                         title => #{en => <<"Request Header">>,
-                                    zh => <<"请求头"/utf8>>},
-                         description => #{en => <<"Request Header">>,
-                                          zh => <<"请求头"/utf8>>}},
-            method => #{type => string,
-                        enum => [<<"PUT">>,<<"POST">>],
-                        default => <<"POST">>,
-                        title => #{en => <<"Request Method">>,
-                                   zh => <<"请求方法"/utf8>>},
-                        description => #{en => <<"Request Method">>,
-                                         zh => <<"请求方法"/utf8>>}}
+                     order => 1,
+                     default => <<"127.0.0.1">>,
+                     title => #{en => <<"HOST">>,
+                                zh => <<"HOST"/utf8>>},
+                     description => #{en => <<"HOST">>,
+                                      zh => <<"HOST"/utf8>>}},
+            port => #{type => number,
+                     default => 6379,
+                     order => 2,
+                     title => #{en => <<"PORT">>,
+                                zh => <<"端口"/utf8>>},
+                     description => #{en => <<"PORT">>,
+                                      zh => <<"端口"/utf8>>}},
+            db => #{type => number,
+                     default => 0,
+                     order => 4,
+                     title => #{en => <<"Database">>,
+                                zh => <<"数据库"/utf8>>},
+                     description => #{en => <<"Database">>,
+                                      zh => <<"数据库"/utf8>>}},
+            pwd => #{type => string,
+                     default => <<"">>,
+                     order => 3,
+                     title => #{en => <<"Password">>,
+                                zh => <<"密码"/utf8>>},
+                     description => #{en => <<"Password">>,
+                                      zh => <<"密码"/utf8>>}}
         }).
 
 -define(ACTION_PARAM_RESOURCE, #{
@@ -67,7 +75,6 @@
 
 -type(action_fun() :: fun((Data :: map(), Envs :: map()) -> Result :: any())).
 
--type(url() :: binary()).
 
 -export_type([action_fun/0]).
 
@@ -84,23 +91,30 @@
 %%------------------------------------------------------------------------------
 
 -spec(on_resource_create(binary(), map()) -> map()).
-on_resource_create(ResId, Conf = #{<<"url">> := Url}) ->
-    case emqx_rule_utils:http_connectivity(Url) of
-        ok -> Conf;
+on_resource_create(ResId, Conf = #{<<"host">> := Host,<<"port">> := Port, <<"db">> := DB, <<"pwd">> := Pwd}) ->
+    io:format("Conf:~p~n", [Conf]),
+    case eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)) of
+        {ok, Pid} ->
+            eredis:stop(Pid),
+            Conf;
         {error, Reason} ->
             ?LOG(error, "Initiate Resource ~p failed, ResId: ~p, ~0p",
                 [?RESOURCE_TYPE_REDISHOOK, ResId, Reason]),
             error({connect_failure, Reason})
     end.
+    
 
 -spec(on_get_resource_status(binary(), map()) -> map()).
-on_get_resource_status(ResId, _Params = #{<<"url">> := Url}) ->
+on_get_resource_status(ResId, _Params = #{<<"host">> := Host,<<"port">> := Port, <<"db">> := DB, <<"pwd">> := Pwd}) ->
+    io:format("_Params:~p~n", [_Params]),
     #{is_alive =>
-        case emqx_rule_utils:http_connectivity(Url) of
-            ok -> true;
+            case eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)) of
+            {ok, Pid} ->
+                eredis:stop(Pid),
+                true;
             {error, Reason} ->
                 ?LOG(error, "Connectivity Check for ~p failed, ResId: ~p, ~0p",
-                     [?RESOURCE_TYPE_REDISHOOK, ResId, Reason]),
+                    [?RESOURCE_TYPE_REDISHOOK, ResId, Reason]),
                 false
         end}.
 
@@ -109,59 +123,13 @@ on_resource_destroy(_ResId, _Params) ->
     ok.
 
 %% An action that forwards publish messages to redis.
--spec(on_action_create_data_to_redis(Id::binary(), #{url() := string()}) -> action_fun()).
-on_action_create_data_to_redis(_Id, Params) ->
-    #{url := Url, headers := Headers, method := Method}
-        = parse_action_params(Params),
-    fun(Selected, _Envs) ->
-        http_request(Url, Headers, Method, Selected)
-    end.
-
+-spec(on_action_create_data_to_redis(Id::binary(), #{}) -> action_fun()).
+on_action_create_data_to_redis(_Id, Params = #{<<"host">> := Host,<<"port">> := Port, <<"db">> := DB, <<"pwd">> := Pwd}) ->
+    {ok, Pid} = eredis:start_link(binary_to_list(Host), Port, DB, binary_to_list(Pwd)),
+    erlang:register(redis_client, Pid).
+    
 
 %%------------------------------------------------------------------------------
 %% Internal functions
 %%------------------------------------------------------------------------------
 
-http_request(Url, Headers, Method, Params) ->
-    logger:debug("[RedisHook Action] ~s to ~s, headers: ~s, body: ~p", [Method, Url, Headers, Params]),
-    case do_http_request(Method, ?JSON_REQ(Url, Headers, jsx:encode(Params)),
-                         [{timeout, 5000}], [], 0) of
-        {ok, _} -> ok;
-        {error, Reason} ->
-            logger:error("[RedisHook Action] HTTP request error: ~p", [Reason]),
-            error({http_request_error, Reason})
-    end.
-
-do_http_request(Method, Req, HTTPOpts, Opts, Times) ->
-    %% Resend request, when TCP closed by remotely
-    case httpc:request(Method, Req, HTTPOpts, Opts) of
-        {error, socket_closed_remotely} when Times < 3 ->
-            timer:sleep(trunc(math:pow(10, Times))),
-            do_http_request(Method, Req, HTTPOpts, Opts, Times+1);
-        Other -> Other
-    end.
-
-parse_action_params(Params = #{<<"url">> := Url}) ->
-    try
-        #{url => str(Url),
-          headers => headers(maps:get(<<"headers">>, Params, undefined)),
-          method => method(maps:get(<<"method">>, Params, <<"POST">>)),
-          template => maps:get(<<"template">>, Params, undefined)}
-    catch _:_ ->
-        throw({invalid_params, Params})
-    end.
-
-method(GET) when GET == <<"GET">>; GET == <<"get">> -> get;
-method(POST) when POST == <<"POST">>; POST == <<"post">> -> post;
-method(PUT) when PUT == <<"PUT">>; PUT == <<"put">> -> put;
-method(DEL) when DEL == <<"DELETE">>; DEL == <<"delete">> -> delete.
-
-headers(undefined) -> [];
-headers(Headers) when is_map(Headers) ->
-    maps:fold(fun(K, V, Acc) ->
-            [{str(K), str(V)} | Acc]
-        end, [], Headers).
-
-str(Str) when is_list(Str) -> Str;
-str(Atom) when is_atom(Atom) -> atom_to_list(Atom);
-str(Bin) when is_binary(Bin) -> binary_to_list(Bin).
